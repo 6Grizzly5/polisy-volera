@@ -8,148 +8,166 @@ from PyQt6.QtWidgets import (
 )
 
 from common.board import Board
-from common.constants import (
-    GAME_ONGOING, POLICE, POLICE_WINS, PORT, THIEF, THIEF_WINS
-)
+from common.constants import GAME_ONGOING, POLICE, POLICE_WINS, PORT, THIEF, THIEF_WINS
 from common.game_state import GameState
 from common.move import Move
 from client.board_widget import BoardWidget
 from client.network import NetworkClient
+from client.local_game import LocalGameController
 from server.game_server import GameServer
+
 
 class MenuWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.game = None
         self.server = None
-        self.setWindowTitle("Polisy sy Volera - V1")
-        self.setMinimumSize(460, 380)
-
+        self.setWindowTitle("Polisy sy Volera - V2")
+        self.setMinimumSize(480, 430)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(45, 35, 45, 35)
 
         title = QLabel("POLISY SY VOLERA")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 28px; font-weight: 700;")
+        title.setStyleSheet("font-size: 30px; font-weight: 800;")
         layout.addWidget(title)
 
-        sub = QLabel("Jeu traditionnel malgache • Prototype réseau V1")
+        sub = QLabel("Jeu traditionnel malgache • Prototype V2")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(sub)
-
         layout.addStretch()
 
-        self.host_role = QComboBox()
-        self.host_role.addItem("Police", POLICE)
-        self.host_role.addItem("Voleur", THIEF)
+        role = QComboBox()
+        role.addItem("Police", POLICE)
+        role.addItem("Voleur", THIEF)
+        layout.addWidget(QLabel("Votre rôle :"))
+        layout.addWidget(role)
+        self.role_combo = role
 
-        create = QPushButton("Créer une partie")
-        join = QPushButton("Rejoindre une partie")
+        local = QPushButton("🤖 Jouer contre le bot")
+        lan_create = QPushButton("🌐 Créer une partie LAN")
+        lan_join = QPushButton("🔗 Rejoindre une partie LAN")
         quit_btn = QPushButton("Quitter")
-
-        create.clicked.connect(self.create_game)
-        join.clicked.connect(self.join_game)
-        quit_btn.clicked.connect(QApplication.quit)
-
-        layout.addWidget(QLabel("Pour créer : choisissez votre rôle"))
-        layout.addWidget(self.host_role)
-        layout.addWidget(create)
-        layout.addWidget(join)
+        layout.addWidget(local)
+        layout.addWidget(lan_create)
+        layout.addWidget(lan_join)
         layout.addWidget(quit_btn)
+
+        local.clicked.connect(self.start_local)
+        lan_create.clicked.connect(self.create_game)
+        lan_join.clicked.connect(self.join_game)
+        quit_btn.clicked.connect(QApplication.quit)
 
         self.info = QLabel("")
         self.info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.info.setWordWrap(True)
         layout.addWidget(self.info)
 
+    def start_local(self):
+        role = self.role_combo.currentData()
+        self.game = GameWindow(role, None, self, None, local=True)
+        self.game.show()
+        self.hide()
+        self.game.start_local(role)
+
     def create_game(self):
-        role = self.host_role.currentData()
+        role = self.role_combo.currentData()
         try:
-            self.server = GameServer(role, log=self.info.setText)
+            self.server = GameServer(role)
             self.server.start()
-            self.info.setText(
-                f"Serveur prêt. IP LAN : {self.local_ip()} | Port : {PORT}"
-            )
             self.game = GameWindow(role, "127.0.0.1", self, self.server)
+            self.game.lan_info_label.setText(
+                f"Partagez cette adresse avec l'autre joueur : "
+                f"{self.local_ip()} • Port {PORT}"
+            )
             self.game.show()
             self.hide()
             self.game.connect_to_server()
         except Exception as exc:
+            if self.server:
+                self.server.stop()
+                self.server = None
             QMessageBox.critical(self, "Erreur", str(exc))
 
     def join_game(self):
-        ip, ok = QInputDialog.getText(
-            self, "Rejoindre", "IP du PC qui héberge :", text="192.168.1.10"
-        )
+        ip, ok = QInputDialog.getText(self, "Rejoindre", "IP du PC serveur :")
         if not ok or not ip.strip():
             return
-
-        role_text, ok = QInputDialog.getItem(
-            self, "Rôle", "Votre rôle :", ["Police", "Voleur"], 0, False
-        )
-        if not ok:
-            return
-
-        role = POLICE if role_text == "Police" else THIEF
+        role = self.role_combo.currentData()
         self.game = GameWindow(role, ip.strip(), self, None)
         self.game.show()
         self.hide()
         self.game.connect_to_server()
 
-    def local_ip(self):
+    @staticmethod
+    def local_ip():
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
+        except Exception:
+            return "127.0.0.1"
         finally:
             s.close()
 
+
 class GameWindow(QMainWindow):
-    def __init__(self, role, host, menu, server):
+    def __init__(self, role, host, menu, server=None, local=False):
         super().__init__()
         self.role = role
         self.host = host
         self.menu = menu
         self.server = server
-        self.board = Board()
-        self.state = GameState()
-        self.network = NetworkClient()
-        self.network.messageReceived.connect(self.process_message)
-        self.network.disconnectedSignal.connect(self.disconnected)
+        self.local = local
         self.selected = None
-
-        role_name = "POLICE" if role == POLICE else "VOLEUR"
-        self.setWindowTitle(f"Polisy sy Volera - {role_name}")
-        self.resize(900, 800)
+        self.state = GameState()
+        self.network = NetworkClient() if not local else None
+        self.setWindowTitle(f"Polisy sy Volera - {('Police' if role == POLICE else 'Voleur')}")
+        self.resize(850, 760)
 
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
 
         top = QHBoxLayout()
-        self.role_label = QLabel(f"Vous êtes : {role_name}")
-        self.connection_label = QLabel("Connexion...")
-        self.connection_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        top.addWidget(self.role_label)
+        title = QLabel(f"POLISY SY VOLERA  •  {('POLICE' if role == POLICE else 'VOLEUR')}")
+        title.setStyleSheet("font-size: 19px; font-weight: 700;")
+        self.connection_label = QLabel("Local" if local else "Connexion...")
+        top.addWidget(title)
         top.addStretch()
         top.addWidget(self.connection_label)
         layout.addLayout(top)
 
-        self.board_widget = BoardWidget(self.board, self.state)
+        self.info_label = QLabel("")
+        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.info_label.setStyleSheet("font-size: 15px; font-weight: 600;")
+        layout.addWidget(self.info_label)
+
+        self.lan_info_label = QLabel("")
+        self.lan_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lan_info_label.setWordWrap(True)
+        layout.addWidget(self.lan_info_label)
+
+        self.board_widget = BoardWidget(Board(), self.state)
         self.board_widget.positionClicked.connect(self.click_position)
         layout.addWidget(self.board_widget, 1)
 
-        self.info_label = QLabel("Connexion...")
-        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.info_label.setStyleSheet("font-size: 16px; font-weight: 600;")
-        layout.addWidget(self.info_label)
-
         bottom = QHBoxLayout()
-        bottom.addStretch()
-        back = QPushButton("Quitter la partie")
+        self.restart_button = QPushButton("Nouvelle partie")
+        self.restart_button.clicked.connect(self.restart)
+        back = QPushButton("Retour au menu")
         back.clicked.connect(self.back_to_menu)
+        bottom.addWidget(self.restart_button)
+        bottom.addStretch()
         bottom.addWidget(back)
         layout.addLayout(bottom)
+
+        if self.network:
+            self.network.messageReceived.connect(self.process_message)
+            self.network.disconnectedSignal.connect(self.disconnected)
+
+    def start_local(self, role):
+        self.local_controller = LocalGameController(self, role)
 
     def connect_to_server(self):
         try:
@@ -160,47 +178,48 @@ class GameWindow(QMainWindow):
 
     def process_message(self, message):
         typ = message.get("type")
-
         if typ == "WAITING":
-            self.connection_label.setText("En attente...")
-            self.info_label.setText("En attente du deuxième joueur...")
-
-        elif typ == "START":
+            self.connection_label.setText("En attente du 2e joueur")
+            self.info_label.setText(
+                "En attente de l'autre joueur. Il doit choisir le rôle opposé."
+            )
+        elif typ in ("START", "STATE"):
             self.state = GameState.from_dict(message["state"])
             self.board_widget.set_state(self.state)
             self.connection_label.setText("Connecté")
             self.update_turn()
-
-        elif typ == "STATE":
-            self.state = GameState.from_dict(message["state"])
-            self.board_widget.set_state(self.state)
-            self.update_turn()
-
-            if self.state.status == THIEF_WINS:
-                QMessageBox.information(self, "Fin", "Le voleur a réussi à revenir au centre !")
-            elif self.state.status == POLICE_WINS:
-                QMessageBox.information(self, "Fin", "La police a encerclé le voleur !")
-
+            self.show_end_if_needed()
         elif typ == "ERROR":
             self.info_label.setText("⚠ " + message.get("message", "Erreur"))
+            self.connection_label.setText("Connexion refusée")
+        elif typ == "DISCONNECTED":
+            self.selected = None
+            self.board_widget.selected = None
+            self.board_widget.update()
+            self.connection_label.setText("Adversaire déconnecté")
+            self.info_label.setText(message.get("message", "L'autre joueur s'est déconnecté."))
 
     def update_turn(self):
         if self.state.status != GAME_ONGOING:
             self.info_label.setText("PARTIE TERMINÉE")
-            return
-
-        if self.state.current_player == self.role:
+        elif self.state.current_player == self.role:
             self.info_label.setText(f"À VOUS DE JOUER • Tour {self.state.turn_number}")
         else:
             name = "VOLEUR" if self.state.current_player == THIEF else "POLICE"
             self.info_label.setText(f"Tour de l'adversaire • {name}")
 
-    def click_position(self, pos):
-        if self.state.status != GAME_ONGOING:
-            return
-        if self.state.current_player != self.role:
-            return
+    def show_end_if_needed(self):
+        if self.state.status == THIEF_WINS:
+            QMessageBox.information(self, "Fin", "🟤 Le voleur a réussi à revenir au centre !")
+        elif self.state.status == POLICE_WINS:
+            QMessageBox.information(self, "Fin", "🔵 La police a bloqué le voleur !")
 
+    def click_position(self, pos):
+        if self.local:
+            self.local_controller.click_position(pos)
+            return
+        if self.state.status != GAME_ONGOING or self.state.current_player != self.role:
+            return
         if self.selected is None:
             if self.role == THIEF and pos == self.state.thief_position:
                 self.selected = pos
@@ -208,40 +227,50 @@ class GameWindow(QMainWindow):
                 self.selected = pos
             else:
                 return
-
             self.board_widget.selected = pos
             self.board_widget.update()
-            self.info_label.setText(f"Position {pos} sélectionnée. Cliquez sur la destination.")
+            self.info_label.setText("Position sélectionnée. Cliquez sur la destination.")
             return
-
         if pos == self.selected:
             self.selected = None
             self.board_widget.selected = None
-            self.board_widget.update()
             self.update_turn()
+            self.board_widget.update()
             return
-
         move = Move(self.role, self.selected, pos)
-        self.network.send_move(move)
         self.selected = None
         self.board_widget.selected = None
         self.board_widget.update()
+        try:
+            self.network.send_move(move)
+        except OSError as exc:
+            self.info_label.setText(f"⚠ Envoi du coup impossible : {exc}")
+
+    def restart(self):
+        if self.local:
+            self.start_local(self.role)
+            return
+        self.info_label.setText("Redémarrage : créez une nouvelle partie pour réinitialiser le serveur.")
 
     def disconnected(self):
-        QTimer.singleShot(0, lambda: self.info_label.setText("Connexion perdue."))
+        if self.connection_label.text() != "Connexion refusée":
+            QTimer.singleShot(0, lambda: self.info_label.setText("Connexion perdue."))
 
     def back_to_menu(self):
-        self.network.close()
+        if self.network:
+            self.network.close()
         if self.server:
             self.server.stop()
         self.close()
         self.menu.show()
 
     def closeEvent(self, event):
-        self.network.close()
+        if self.network:
+            self.network.close()
         if self.server:
             self.server.stop()
         event.accept()
+
 
 def main():
     app = QApplication(sys.argv)
@@ -253,6 +282,7 @@ def main():
     menu = MenuWindow()
     menu.show()
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()

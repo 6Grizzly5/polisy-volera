@@ -12,6 +12,8 @@ class GameServer:
     """Serveur TCP arbitre une seule partie LAN."""
 
     def __init__(self, host_role, host="0.0.0.0", port=PORT, log=None):
+        if host_role not in (THIEF, POLICE):
+            raise ValueError("Le rôle de l'hôte doit être Police ou Voleur.")
         self.host_role = host_role
         self.host = host
         self.port = port
@@ -26,8 +28,13 @@ class GameServer:
     def start(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen(2)
+        try:
+            self.server_socket.bind((self.host, self.port))
+            self.server_socket.listen(2)
+        except OSError:
+            self.server_socket.close()
+            self.server_socket = None
+            raise
         self.running = True
         self.log(f"Serveur prêt : port {self.port}")
         threading.Thread(target=self.accept_loop, daemon=True).start()
@@ -55,7 +62,12 @@ class GameServer:
 
             with self.lock:
                 if requested in self.clients:
-                    self.send(conn, {"type": "ERROR", "message": "Ce rôle est déjà pris."})
+                    available_role = THIEF if self.host_role == POLICE else POLICE
+                    role_name = "Voleur" if available_role == THIEF else "Police"
+                    self.send(conn, {
+                        "type": "ERROR",
+                        "message": f"Ce rôle est déjà pris. Choisissez le rôle {role_name} sur l'écran d'accueil.",
+                    })
                     return
                 role = requested
                 self.clients[role] = conn
@@ -88,6 +100,11 @@ class GameServer:
             with self.lock:
                 if role:
                     self.clients.pop(role, None)
+            if role and self.running:
+                self.broadcast({
+                    "type": "DISCONNECTED",
+                    "message": "L'autre joueur s'est déconnecté. Recréez une partie pour rejouer.",
+                })
             try:
                 conn.close()
             except Exception:
@@ -103,6 +120,12 @@ class GameServer:
             return
 
         with self.lock:
+            if len(self.clients) < 2:
+                self.send(self.clients.get(role), {
+                    "type": "ERROR",
+                    "message": "En attente de la connexion de l'autre joueur.",
+                })
+                return
             try:
                 self.state = Rules.apply_move(self.state, move, self.board)
             except ValueError as exc:
@@ -141,7 +164,8 @@ class GameServer:
     def stop(self):
         self.running = False
         try:
-            self.server_socket.close()
+            if self.server_socket:
+                self.server_socket.close()
         except Exception:
             pass
         for conn in list(self.clients.values()):

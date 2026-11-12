@@ -3,6 +3,7 @@ import socket
 import threading
 
 from PyQt6.QtCore import QObject, pyqtSignal
+from common.constants import PROTOCOL_VERSION
 
 class NetworkClient(QObject):
     messageReceived = pyqtSignal(dict)
@@ -12,19 +13,21 @@ class NetworkClient(QObject):
         super().__init__(parent)
         self.sock = None
         self.running = False
+        self.send_lock = threading.Lock()
 
     def connect(self, host, port, role):
         self.sock = socket.create_connection((host, port), timeout=5)
         self.sock.settimeout(None)
         self.running = True
-        self.send({"type": "HELLO", "version": 1, "role": role})
+        self.send({"type": "HELLO", "version": PROTOCOL_VERSION, "role": role})
         threading.Thread(target=self.receive_loop, daemon=True).start()
 
     def receive_loop(self):
         buffer = b""
+        sock = self.sock
         try:
             while self.running:
-                data = self.sock.recv(4096)
+                data = sock.recv(4096)
                 if not data:
                     break
                 buffer += data
@@ -45,10 +48,11 @@ class NetworkClient(QObject):
             self.disconnectedSignal.emit()
 
     def send(self, payload):
-        if self.sock:
-            self.sock.sendall(
-                (json.dumps(payload) + "\n").encode("utf-8")
-            )
+        if not self.sock:
+            raise OSError("La connexion au serveur n'est pas ouverte.")
+        data = (json.dumps(payload) + "\n").encode("utf-8")
+        with self.send_lock:
+            self.sock.sendall(data)
 
     def send_move(self, move):
         self.send({

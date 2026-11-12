@@ -6,9 +6,11 @@ from PyQt6.QtWidgets import QWidget
 
 from common.constants import THIEF, POLICE
 
+
 class BoardWidget(QWidget):
     positionClicked = pyqtSignal(int)
 
+    # Coordonnées du vrai plateau circulaire.
     POINTS = {
         0: (300, 300),
         1: (300, 55),
@@ -48,7 +50,6 @@ class BoardWidget(QWidget):
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
         side = min(self.width(), self.height())
         ox = (self.width() - side) / 2
         oy = (self.height() - side) / 2
@@ -56,14 +57,14 @@ class BoardWidget(QWidget):
 
         p.fillRect(self.rect(), QBrush(Qt.GlobalColor.white))
 
-        # Outer circle
+        # Grand cercle traditionnel.
         p.setPen(QPen(Qt.GlobalColor.black, max(2, int(3 * scale))))
-        p.drawEllipse(int(ox + 40*scale), int(oy + 40*scale),
-                      int(520*scale), int(520*scale))
+        p.drawEllipse(int(ox + 40 * scale), int(oy + 40 * scale),
+                      int(520 * scale), int(520 * scale))
 
-        # Graph edges
+        # Toutes les arêtes du graphe, y compris les arcs extérieurs.
         drawn = set()
-        p.setPen(QPen(Qt.GlobalColor.black, max(2, int(2.5*scale))))
+        p.setPen(QPen(Qt.GlobalColor.black, max(2, int(2.5 * scale))))
         for a in self.board.positions():
             for b in self.board.get_neighbors(a):
                 edge = tuple(sorted((a, b)))
@@ -72,25 +73,29 @@ class BoardWidget(QWidget):
                 drawn.add(edge)
                 p.drawLine(self._point(a), self._point(b))
 
-        # Position nodes
+        # Sommets.
         for pos in self.POINTS:
             c = self._point(pos)
             r = 18 * scale
-            p.setBrush(QBrush(Qt.GlobalColor.yellow if pos == self.selected else Qt.GlobalColor.white))
+            if pos == self.selected:
+                fill = Qt.GlobalColor.yellow
+            else:
+                fill = Qt.GlobalColor.white
+            p.setBrush(QBrush(fill))
             p.setPen(QPen(Qt.GlobalColor.black, 2))
             p.drawEllipse(c, r, r)
             p.setPen(QPen(Qt.GlobalColor.darkGray))
-            p.setFont(QFont("Arial", max(9, int(10*scale))))
-            p.drawText(c + QPointF(-4, 4), str(pos))
+            p.setFont(QFont("Arial", max(9, int(10 * scale))))
+            text = str(pos)
+            p.drawText(c + QPointF(-4 if pos < 10 else -7, 4), text)
 
-        # Pieces
         self._draw_piece(p, self.state.thief_position, THIEF)
         for pos in self.state.police_positions:
             self._draw_piece(p, pos, POLICE)
 
     def _draw_piece(self, p, pos, role):
         c = self._point(pos)
-        r = 13 * min(self.width(), self.height()) / 600
+        r = 14 * min(self.width(), self.height()) / 600
         brush = Qt.GlobalColor.darkRed if role == THIEF else Qt.GlobalColor.darkBlue
         p.setBrush(QBrush(brush))
         p.setPen(QPen(Qt.GlobalColor.black, 2))
@@ -101,8 +106,7 @@ class BoardWidget(QWidget):
             return
         click = event.position()
         side = min(self.width(), self.height())
-        threshold = 32 * side / 600
-
+        threshold = 34 * side / 600
         best = None
         best_distance = threshold
         for pos in self.POINTS:
@@ -111,6 +115,5 @@ class BoardWidget(QWidget):
             if d < best_distance:
                 best = pos
                 best_distance = d
-
         if best is not None:
             self.positionClicked.emit(best)
