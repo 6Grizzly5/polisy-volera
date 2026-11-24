@@ -3,8 +3,8 @@ import sys
 
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QHBoxLayout, QInputDialog, QLabel,
-    QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
+    QApplication, QButtonGroup, QComboBox, QHBoxLayout, QInputDialog, QLabel,
+    QMainWindow, QMessageBox, QVBoxLayout
 )
 
 from common.board import Board
@@ -12,42 +12,61 @@ from common.constants import GAME_ONGOING, POLICE, POLICE_WINS, PORT, THIEF, THI
 from common.game_state import GameState
 from common.move import Move
 from client.board_widget import BoardWidget
+from client.theme import APP_STYLESHEET
+from client.widgets import (
+    AnimatedBackground, GameButton, RoleCard, StatusLabel, TitleWidget
+)
 from client.network import NetworkClient
 from client.local_game import LocalGameController
 from server.game_server import GameServer
 
 
-class MenuWindow(QWidget):
+class MenuWindow(AnimatedBackground):
     def __init__(self):
         super().__init__()
         self.game = None
         self.server = None
         self.setWindowTitle("Polisy sy Volera - V2")
-        self.setMinimumSize(480, 430)
+        self.setMinimumSize(600, 740)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(45, 35, 45, 35)
+        layout.setContentsMargins(52, 36, 52, 32)
+        layout.setSpacing(12)
 
-        title = QLabel("POLISY SY VOLERA")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 30px; font-weight: 800;")
-        layout.addWidget(title)
-
-        sub = QLabel("Jeu traditionnel malgache • Prototype V2")
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(sub)
+        layout.addWidget(TitleWidget("POLISY SY VOLERA",
+                                     "Jeu traditionnel malgache • Prototype V2"))
         layout.addStretch()
 
-        role = QComboBox()
+        role = QComboBox(self)
         role.addItem("Police", POLICE)
         role.addItem("Voleur", THIEF)
-        layout.addWidget(QLabel("Votre rôle :"))
-        layout.addWidget(role)
+        role.hide()
         self.role_combo = role
 
-        local = QPushButton("🤖 Jouer contre le bot")
-        lan_create = QPushButton("🌐 Créer une partie LAN")
-        lan_join = QPushButton("🔗 Rejoindre une partie LAN")
-        quit_btn = QPushButton("Quitter")
+        role_label = QLabel("CHOISIS TON CAMP")
+        role_label.setObjectName("fieldLabel")
+        role_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(role_label)
+
+        cards = QHBoxLayout()
+        cards.setSpacing(6)
+        police_card = RoleCard(True, "Police", "Encercle le voleur pour le bloquer")
+        thief_card = RoleCard(False, "Voleur", "Quitte le centre puis reviens-y")
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        group.addButton(police_card)
+        group.addButton(thief_card)
+        police_card.setChecked(True)
+        police_card.clicked.connect(lambda: role.setCurrentIndex(0))
+        thief_card.clicked.connect(lambda: role.setCurrentIndex(1))
+        cards.addWidget(police_card)
+        cards.addWidget(thief_card)
+        layout.addLayout(cards)
+        layout.addSpacing(8)
+
+        local = GameButton("Jouer contre le bot", "primary")
+        lan_create = GameButton("Créer une partie LAN")
+        lan_join = GameButton("Rejoindre une partie LAN")
+        quit_btn = GameButton("Quitter", "ghost")
         layout.addWidget(local)
         layout.addWidget(lan_create)
         layout.addWidget(lan_join)
@@ -59,6 +78,7 @@ class MenuWindow(QWidget):
         quit_btn.clicked.connect(QApplication.quit)
 
         self.info = QLabel("")
+        self.info.setObjectName("menuInfo")
         self.info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.info.setWordWrap(True)
         layout.addWidget(self.info)
@@ -125,25 +145,29 @@ class GameWindow(QMainWindow):
         self.setWindowTitle(f"Polisy sy Volera - {('Police' if role == POLICE else 'Voleur')}")
         self.resize(850, 760)
 
-        central = QWidget()
+        central = AnimatedBackground()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
 
         top = QHBoxLayout()
         title = QLabel(f"POLISY SY VOLERA  •  {('POLICE' if role == POLICE else 'VOLEUR')}")
-        title.setStyleSheet("font-size: 19px; font-weight: 700;")
+        title.setObjectName("gameTitle")
         self.connection_label = QLabel("Local" if local else "Connexion...")
+        self.connection_label.setObjectName("badge")
         top.addWidget(title)
         top.addStretch()
         top.addWidget(self.connection_label)
         layout.addLayout(top)
 
-        self.info_label = QLabel("")
+        self.info_label = StatusLabel("")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.info_label.setStyleSheet("font-size: 15px; font-weight: 600;")
+        self.info_label.setObjectName("statusInfo")
         layout.addWidget(self.info_label)
 
         self.lan_info_label = QLabel("")
+        self.lan_info_label.setObjectName("lanInfo")
         self.lan_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lan_info_label.setWordWrap(True)
         layout.addWidget(self.lan_info_label)
@@ -153,9 +177,9 @@ class GameWindow(QMainWindow):
         layout.addWidget(self.board_widget, 1)
 
         bottom = QHBoxLayout()
-        self.restart_button = QPushButton("Nouvelle partie")
+        self.restart_button = GameButton("Nouvelle partie", "primary")
         self.restart_button.clicked.connect(self.restart)
-        back = QPushButton("Retour au menu")
+        back = GameButton("Retour au menu", "ghost")
         back.clicked.connect(self.back_to_menu)
         bottom.addWidget(self.restart_button)
         bottom.addStretch()
@@ -274,11 +298,7 @@ class GameWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setStyleSheet("""
-        QWidget { font-family: Arial; font-size: 14px; }
-        QPushButton { padding: 9px; }
-        QComboBox { padding: 7px; }
-    """)
+    app.setStyleSheet(APP_STYLESHEET)
     menu = MenuWindow()
     menu.show()
     sys.exit(app.exec())
